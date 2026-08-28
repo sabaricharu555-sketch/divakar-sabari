@@ -1,0 +1,137 @@
+// --- TYPES & INTERFACES ---
+type OrderStatus = 'PENDING' | 'PREPARING' | 'READY' | 'COMPLETED';
+
+interface MenuItem {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  isVegetarian: boolean;
+  stock: number;
+  expiryHour: number; // 24h format for daily surplus tracking
+}
+
+interface StudentWallet {
+  cardId: string;
+  studentId: string;
+  balance: number;
+  dailyLimit: number;
+  spentToday: number;
+}
+
+interface OrderItem {
+  menuItem: MenuItem;
+  quantity: number;
+}
+
+interface Order {
+  id: string;
+  studentId: string;
+  items: OrderItem[];
+  totalAmount: number;
+  status: OrderStatus;
+  createdAt: Date;
+}
+
+// --- SMART CANTEEN CORE ENGINE ---
+export class SmartCanteenSystem {
+  private menu: MenuItem[] = [];
+  private orders: Order[] = [];
+
+  constructor(initialMenu: MenuItem[]) {
+    this.menu = initialMenu;
+  }
+
+  // 1. Dietary & Surplus-Aware Menu Query
+  public getAvailableMenu(currentHour: number, vegOnly: boolean = false): MenuItem[] {
+    return this.menu
+      .filter((item) => item.stock > 0 && (!vegOnly || item.isVegetarian))
+      .map((item) => ({
+        ...item,
+        // Apply 50% discount in the final hour before closing
+        price: currentHour >= item.expiryHour - 1 ? item.price * 0.5 : item.price,
+      }));
+  }
+
+  // 2. NFC / RFID Card Payment Processing
+  public processRFIDPayment(wallet: StudentWallet, amount: number): boolean {
+    if (wallet.spentToday + amount > wallet.dailyLimit) {
+      throw new Error('Daily spending limit reached.');
+    }
+    if (wallet.balance < amount) {
+      throw new Error('Insufficient card balance.');
+    }
+
+    wallet.balance -= amount;
+    wallet.spentToday += amount;
+    return true;
+  }
+
+  // 3. Place Order & Route to Kitchen
+  public createOrder(wallet: StudentWallet, items: { itemId: string; quantity: number }[]): Order {
+    let totalAmount = 0;
+    const orderItems: OrderItem[] = [];
+
+    for (const req of items) {
+      const item = this.menu.find((m) => m.id === req.itemId);
+      if (!item || item.stock < req.quantity) {
+        throw new Error(`Item ${req.itemId} is out of stock.`);
+      }
+
+      item.stock -= req.quantity;
+      totalAmount += item.price * req.quantity;
+      orderItems.push({ menuItem: item, quantity: req.quantity });
+    }
+
+    // Execute RFID Deduction
+    this.processRFIDPayment(wallet, totalAmount);
+
+    const newOrder: Order = {
+      id: `ORD-${Date.now()}`,
+      studentId: wallet.studentId,
+      items: orderItems,
+      totalAmount,
+      status: 'PENDING',
+      createdAt: new Date(),
+    };
+
+    this.orders.push(newOrder);
+    return newOrder;
+  }
+
+  // 4. Kitchen Display System (KDS) Status Management
+  public updateOrderStatus(orderId: string, status: OrderStatus): Order {
+    const order = this.orders.find((o) => o.id === orderId);
+    if (!order) throw new Error('Order not found.');
+
+    order.status = status;
+    return order;
+  }
+
+  public getKitchenQueue(): Order[] {
+    return this.orders.filter((o) => o.status !== 'COMPLETED');
+  }
+}
+
+// --- EXAMPLE USAGE ---
+const sampleMenu: MenuItem[] = [
+  { id: 'M1', name: 'Veggie Salad', category: 'Meals', price: 4.50, isVegetarian: true, stock: 10, expiryHour: 18 },
+  { id: 'M2', name: 'Chicken Wrap', category: 'Meals', price: 6.00, isVegetarian: false, stock: 5, expiryHour: 18 }
+];
+
+const canteen = new SmartCanteenSystem(sampleMenu);
+
+const studentCard: StudentWallet = {
+  cardId: 'NFC-9912',
+  studentId: 'STU-101',
+  balance: 20.00,
+  dailyLimit: 15.00,
+  spentToday: 2.00
+};
+
+// Place an order
+const order = canteen.createOrder(studentCard, [{ itemId: 'M1', quantity: 1 }]);
+console.log('Order Created:', order.id, 'New Balance:', studentCard.balance);
+
+// Update status in Kitchen Display
+canteen.updateOrderStatus(order.id, 'PREPARING');
