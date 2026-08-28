@@ -1,0 +1,12 @@
+type OrderStatus = 'PENDING' | 'PREPARING' | 'READY' | 'COMPLETED';
+
+interface Order {
+  id: string;
+  status: OrderStatus;
+}
+
+function updateOrderStatus(orders: Order[], orderId: string, nextStatus: OrderStatus): Order[] {
+  return orders.map(order => 
+    order.id === orderId ? { ...order, status: nextStatus } : order
+  );
+}
