@@ -1,0 +1,12 @@
+smart-canteen/
+├── backend/
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── src/
+│       └── server.ts
+├── frontend/
+│   ├── package.json
+│   └── src/
+│       └── App.tsx
+├── docker-compose.yml
+└── README.md
