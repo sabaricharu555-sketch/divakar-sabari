@@ -1,0 +1,116 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"time"
+
+	"cloud.google.com/go/pubsub"
+	pb "canteen/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+type CanteenServer struct {
+	pb.UnimplementedCanteenServiceServer
+	pubsubClient *pubsub.Client
+	topic        *pubsub.Topic
+}
+
+func NewCanteenServer(ctx context.Context, projectID string, topicID string) (*CanteenServer, error) {
+	client, err := pubsub.NewClient(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Pub/Sub client: %w", err)
+	}
+
+	topic := client.Topic(topicID)
+	return &CanteenServer{
+		pubsubClient: client,
+		topic:        topic,
+	}, nil
+}
+
+func (s *CanteenServer) GetMenu(ctx context.Context, req *pb.GetMenuRequest) (*pb.GetMenuResponse, error) {
+	// Mock response representing localized cafeteria items stored in Cloud Spanner
+	items := []*pb.MenuItem{
+		{Id: "item-01", Name: "Micro-Kitchen Vegan Bowl", Price: 8.50, Calories: 450, Allergens: []string{"nuts"}},
+		{Id: "item-02", Name: "Android Cold Brew", Price: 3.00, Calories: 15, Allergens: []string{}},
+	}
+
+	filtered := make([]*pb.MenuItem, 0)
+	for _, item := range items {
+		hasAllergen := false
+		for _, a := range item.Allergens {
+			for _, exclude := range req.ExcludeAllergens {
+				if a == exclude {
+					hasAllergen = true
+					break
+				}
+			}
+		}
+		if !hasAllergen {
+			filtered = append(filtered, item)
+		}
+	}
+
+	return &pb.GetMenuResponse{Items: filtered}, nil
+}
+
+func (s *CanteenServer) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest) (*pb.Order, error) {
+	if len(req.Items) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "Order must contain at least one item")
+	}
+
+	orderID := fmt.Sprintf("ORD-%d", time.Now().UnixNano())
+	total := 8.50 // Calculate from DB lookup in production
+
+	newOrder := &pb.Order{
+		OrderId:        orderID,
+		GoogleUserId:   req.GoogleUserId,
+		Status:         pb.OrderStatus_ORDER_STATUS_RECEIVED,
+		TotalCost:      total,
+		CreatedAtUnix: time.Now().Unix(),
+	}
+
+	// Publish async event to Cloud Pub/Sub for Payment and Kitchen Display Processing
+	eventData, _ := json.Marshal(map[string]interface{}{
+		"event_id":   fmt.Sprintf("evt-%d", time.Now().UnixNano()),
+		"event_type": "ORDER_PLACED",
+		"order_id":   orderID,
+		"user_id":    req.GoogleUserId,
+		"campus_id":  req.CampusId,
+		"total":      total,
+	})
+
+	res := s.topic.Publish(ctx, &pubsub.Message{Data: eventData})
+	if _, err := res.Get(ctx); err != nil {
+		log.Printf("Failed to publish event to Pub/Sub: %v", err)
+	}
+
+	return newOrder, nil
+}
+
+func main() {
+	ctx := context.Background()
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("Failed to listen: %v", err)
+	}
+
+	server, err := NewCanteenServer(ctx, "google-campus-canteen", "canteen-order-events")
+	if err != nil {
+		log.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterCanteenServiceServer(grpcServer, server)
+
+	log.Println("Google Smart Canteen gRPC server listening on :50051")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("Failed to serve: %v", err)
+	}
+}
