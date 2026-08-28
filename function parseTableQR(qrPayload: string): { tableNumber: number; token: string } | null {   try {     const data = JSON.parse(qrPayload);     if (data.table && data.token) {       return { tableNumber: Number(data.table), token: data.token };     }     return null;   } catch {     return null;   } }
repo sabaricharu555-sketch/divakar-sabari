@@ -1,0 +1,11 @@
+function parseTableQR(qrPayload: string): { tableNumber: number; token: string } | null {
+  try {
+    const data = JSON.parse(qrPayload);
+    if (data.table && data.token) {
+      return { tableNumber: Number(data.table), token: data.token };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
