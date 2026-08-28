@@ -1,0 +1,15 @@
+interface MenuItem {
+  id: number;
+  name: string;
+  isVegetarian: boolean;
+  isGlutenFree: boolean;
+  price: number;
+}
+
+function filterMenu(items: MenuItem[], prefs: { vegOnly?: boolean; gfOnly?: boolean }) {
+  return items.filter(item => {
+    if (prefs.vegOnly && !item.isVegetarian) return false;
+    if (prefs.gfOnly && !item.isGlutenFree) return false;
+    return true;
+  });
+}
